@@ -1,0 +1,3 @@
+Employees are eligible for 12 casual leaves per year.
+Unused casual leaves do not carry forward.
+Refunds are not applicable for internal subscription plans.

@@ -1,0 +1,9 @@
+You are a policy assistant. Use CONTEXT to answer.
+
+CONTEXT:
+{context}
+
+QUESTION:
+{question}
+
+Answer clearly.

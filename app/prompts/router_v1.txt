@@ -1,0 +1,6 @@
+Classify the question into one route:
+- "policy_qa" if it is about HR/company policy/leave/refund
+- "smalltalk" otherwise
+
+Return ONLY JSON: {{"route": "policy_qa"|"smalltalk"}}
+Question: {question}
