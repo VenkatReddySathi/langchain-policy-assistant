@@ -5,13 +5,12 @@ on:
     branches: ["main"]
 
 env:
-  AWS_REGION: eu-north-1        # ← your region (Stockholm)
+  AWS_REGION: eu-north-1        # your region (Stockholm)
   ECR_REPOSITORY: policy-assistant
   ECS_CLUSTER: policy-assistant-cluster1
-  ECS_SERVICE: policy-assistant-task-service-zi23lphw
+  ECS_SERVICE: policy-assistant-task-service-2iz31phw
   TASK_DEFINITION_FAMILY: policy-assistant-task
   CONTAINER_NAME: policy-assistant
-
 
 jobs:
   deploy:
@@ -47,11 +46,29 @@ jobs:
             --task-definition ${{ env.TASK_DEFINITION_FAMILY }} \
             --query taskDefinition > taskdef.json
 
+      - name: Clean task definition JSON (remove unsupported keys)
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          jq 'del(
+            .enableFaultInjection,
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' taskdef.json > taskdef-clean.json
+
+      # Optional debug (keep for now; you can remove later)
+      - name: Show cleaned task definition
+        run: cat taskdef-clean.json
+
       - name: Render new task definition (update image)
         id: render-task
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: taskdef.json
+          task-definition: taskdef-clean.json
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ env.IMAGE }}
 
