@@ -1,15 +1,15 @@
-name: Deploy to ECS
+name: Deploy to Azure Container Apps
 
 on:
   push:
     branches: ["main"]
 
 env:
-  AWS_REGION: eu-north-1        # your region (Stockholm)
-  ECR_REPOSITORY: policy-assistant
-  ECS_CLUSTER: policy-assistant-cluster1
-  ECS_SERVICE: policy-assistant-task-service-2iz31phw
-  TASK_DEFINITION_FAMILY: policy-assistant-task
+  AZURE_REGION: northeurope        # Azure region (e.g., northeurope, westeurope, eastus)
+  ACR_REGISTRY: policyassistant    # Your Azure Container Registry name (lowercase, no hyphens)
+  RESOURCE_GROUP: policy-assistant-rg
+  CONTAINER_APP_NAME: policy-assistant-app
+  CONTAINER_APP_ENVIRONMENT: policy-assistant-env
   CONTAINER_NAME: policy-assistant
 
 jobs:
@@ -20,62 +20,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_REGISTRY }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build, tag, push image to ECR
+      - name: Build and push image to ACR
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          echo "IMAGE=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_ENV
+          docker build -t ${{ env.ACR_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:$IMAGE_TAG .
+          docker build -t ${{ env.ACR_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:latest .
+          docker push ${{ env.ACR_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:$IMAGE_TAG
+          docker push ${{ env.ACR_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:latest
+          echo "IMAGE=${{ env.ACR_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:$IMAGE_TAG" >> $GITHUB_ENV
 
-      - name: Get current task definition
+      - name: Install Azure CLI extension for Container Apps
         run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.TASK_DEFINITION_FAMILY }} \
-            --query taskDefinition > taskdef.json
+          az extension add --name containerapp --upgrade
 
-      - name: Clean task definition JSON (remove unsupported keys)
+      - name: Deploy to Azure Container Apps
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          jq 'del(
-            .enableFaultInjection,
-            .taskDefinitionArn,
-            .revision,
-            .status,
-            .requiresAttributes,
-            .compatibilities,
-            .registeredAt,
-            .registeredBy
-          )' taskdef.json > taskdef-clean.json
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE }} \
+            --set-env-vars \
+              "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+              "APP_NAME=LangChain Policy Assistant" \
+              "CHAT_MODEL=gpt-4o-mini" \
+              "EMB_MODEL=text-embedding-3-small"
 
-      # Optional debug (keep for now; you can remove later)
-      - name: Show cleaned task definition
-        run: cat taskdef-clean.json
-
-      - name: Render new task definition (update image)
-        id: render-task
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: taskdef-clean.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ env.IMAGE }}
-
-      - name: Deploy updated task definition to ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.render-task.outputs.task-definition }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          service: ${{ env.ECS_SERVICE }}
-          wait-for-service-stability: true
+      - name: Get Container App URL
+        run: |
+          URL=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+          echo "Application URL: https://$URL"
+          echo "::notice::Application deployed to: https://$URL"
